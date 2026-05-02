@@ -206,6 +206,8 @@ global {
   log_level: info
   allow_insecure: false
   auto_config_kernel_parameter: true
+  switch_cooldown: 0s
+  switch_min_wins: 1
 }
 
 subscription {
@@ -235,8 +237,12 @@ group {
   proxy {
     #filter: name(keyword: HK, keyword: SG)
     policy: min_moving_avg
+    #switch_cooldown: 30s
+    #switch_min_wins: 1
   }
 }
+
+`switch_cooldown` and `switch_min_wins` are optional anti-flap controls for `min`, `min_avg10`, and `min_moving_avg` group policies; group values can override global values when set/non-zero, and dead or missing current nodes bypass the controls.
 
 # See https://github.com/daeuniverse/dae/blob/main/docs/en/configuration/routing.md for full examples.
 routing {

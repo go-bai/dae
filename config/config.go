@@ -29,6 +29,8 @@ type Global struct {
 	UdpCheckDns           []string      `mapstructure:"udp_check_dns" default:"dns.google:53,8.8.8.8,2001:4860:4860::8888"`
 	CheckInterval         time.Duration `mapstructure:"check_interval" default:"30s"`
 	CheckTolerance        time.Duration `mapstructure:"check_tolerance" default:"0"`
+	SwitchCooldown        time.Duration `mapstructure:"switch_cooldown" default:"0"`
+	SwitchMinWins         int           `mapstructure:"switch_min_wins" default:"1"`
 	LanInterface          []string      `mapstructure:"lan_interface"`
 	WanInterface          []string      `mapstructure:"wan_interface"`
 	AllowInsecure         bool          `mapstructure:"allow_insecure" default:"false"`
@@ -130,6 +132,8 @@ type Group struct {
 	UdpCheckDns        []string      `mapstructure:"udp_check_dns"`
 	CheckInterval      time.Duration `mapstructure:"check_interval"`
 	CheckTolerance     time.Duration `mapstructure:"check_tolerance"`
+	SwitchCooldown     time.Duration `mapstructure:"switch_cooldown"`
+	SwitchMinWins      int           `mapstructure:"switch_min_wins"`
 }
 
 type DnsRequestRouting struct {

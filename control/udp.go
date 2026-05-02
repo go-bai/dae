@@ -934,12 +934,14 @@ afterSniffing:
 	dialTarget := realDst.String()
 getNew:
 	if retry > MaxRetry {
-		c.log.WithFields(logrus.Fields{
-			"src":     RefineSourceToShow(realSrc, realDst.Addr()),
-			"network": networkType.String(),
-			"dialer":  ue.Dialer.Property().Name,
-			"retry":   retry,
-		}).Warnln("Touch max retry limit.")
+		if c.allowConnectionErrorLog(time.Now()) {
+			c.log.WithFields(logrus.Fields{
+				"src":     RefineSourceToShow(realSrc, realDst.Addr()),
+				"network": networkType.String(),
+				"dialer":  ue.Dialer.Property().Name,
+				"retry":   retry,
+			}).Warnln("Touch max retry limit.")
+		}
 		return fmt.Errorf("touch max retry limit")
 	}
 

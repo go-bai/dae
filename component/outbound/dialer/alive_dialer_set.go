@@ -42,6 +42,8 @@ type AliveDialerSet struct {
 	dialerGroupName string
 	CheckTyp        *NetworkType
 	tolerance       time.Duration
+	switchCooldown  time.Duration
+	switchMinWins   int
 
 	aliveChangeCallback func(alive bool)
 
@@ -57,6 +59,12 @@ type AliveDialerSet struct {
 
 	selectionPolicy consts.DialerSelectionPolicy
 	minLatency      minLatency
+
+	// Switch stability state (guarded by mu).
+	lastSwitchAt      time.Time
+	candidateDialer   *Dialer
+	candidateWins     int
+	lastCandidateWins int
 }
 
 func NewAliveDialerSet(
@@ -64,6 +72,8 @@ func NewAliveDialerSet(
 	dialerGroupName string,
 	networkType *NetworkType,
 	tolerance time.Duration,
+	switchCooldown time.Duration,
+	switchMinWins int,
 	selectionPolicy consts.DialerSelectionPolicy,
 	dialers []*Dialer,
 	dialersAnnotations []*Annotation,
@@ -83,6 +93,8 @@ func NewAliveDialerSet(
 		dialerGroupName:       dialerGroupName,
 		CheckTyp:              networkType,
 		tolerance:             tolerance,
+		switchCooldown:        switchCooldown,
+		switchMinWins:         switchMinWins,
 		aliveChangeCallback:   aliveChangeCallback,
 		dialerToIndex:         make(map[*Dialer]int),
 		dialerToLatency:       make(map[*Dialer]time.Duration),
@@ -141,6 +153,124 @@ func (a *AliveDialerSet) Len() int {
 	return len(a.aliveEntries)
 }
 
+func (a *AliveDialerSet) SwitchCooldown() time.Duration {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.switchCooldown
+}
+
+func (a *AliveDialerSet) SwitchMinWins() int {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.switchMinWins
+}
+
+// cooldownAllowsSwitchLocked reports whether the switch cooldown has elapsed.
+// Must be called with a.mu held (read or write).
+func (a *AliveDialerSet) cooldownAllowsSwitchLocked() bool {
+	if a.switchCooldown <= 0 || a.lastSwitchAt.IsZero() {
+		return true
+	}
+	return time.Since(a.lastSwitchAt) >= a.switchCooldown
+}
+
+// resetSwitchCandidateLocked clears the consecutive-wins candidate state.
+// Must be called with a.mu held for writing.
+func (a *AliveDialerSet) resetSwitchCandidateLocked() {
+	a.candidateDialer = nil
+	a.candidateWins = 0
+}
+
+// candidateBeatsCurrentBestLocked reports whether candidateSortingLatency qualifies
+// as a winning challenger against the current best using the same tolerance
+// predicate as voluntary promotion.
+// Must be called with a.mu held (read or write).
+func (a *AliveDialerSet) candidateBeatsCurrentBestLocked(candidate *Dialer, candidateSortingLatency time.Duration) bool {
+	return candidate != nil &&
+		a.minLatency.dialer != nil &&
+		candidate != a.minLatency.dialer &&
+		candidateSortingLatency <= a.minLatency.sortingLatency &&
+		(a.minLatency.sortingLatency < a.tolerance || candidateSortingLatency <= a.minLatency.sortingLatency-a.tolerance)
+}
+
+// resetSwitchCandidateIfNotWinningLocked clears candidate state if the cached
+// candidate no longer beats the current best after a current-best latency change.
+// Must be called with a.mu held for writing.
+func (a *AliveDialerSet) resetSwitchCandidateIfNotWinningLocked() {
+	if a.candidateDialer == nil {
+		return
+	}
+	candidateLatency, ok := a.dialerToLatency[a.candidateDialer]
+	if !ok {
+		a.resetSwitchCandidateLocked()
+		return
+	}
+	candidateSortingLatency := candidateLatency + a.dialerToLatencyOffset[a.candidateDialer]
+	if !a.candidateBeatsCurrentBestLocked(a.candidateDialer, candidateSortingLatency) {
+		a.resetSwitchCandidateLocked()
+	}
+}
+
+// canPromoteCandidateLocked decides whether a voluntary switch to the given
+// candidate dialer with the given sortingLatency should be allowed.
+// It gates on the switch cooldown and the consecutive-wins requirement.
+// Returns (allowed, wins) where wins is the current candidateWins count.
+// Must be called with a.mu held for writing.
+func (a *AliveDialerSet) canPromoteCandidateLocked(candidate *Dialer, sortingLatency time.Duration) (bool, int) {
+	// If there is no current best (or the candidate is the current best), allow freely.
+	if a.minLatency.dialer == nil || a.minLatency.dialer == candidate {
+		return true, 0
+	}
+
+	// Apply cooldown gate first; if cooldown suppresses, log and return.
+	if !a.cooldownAllowsSwitchLocked() {
+		remaining := a.switchCooldown - time.Since(a.lastSwitchAt)
+		if a.log.IsLevelEnabled(logrus.DebugLevel) {
+			a.log.WithFields(logrus.Fields{
+				"group":              a.dialerGroupName,
+				"network":            a.CheckTyp.String(),
+				"candidate_dialer":   candidate.property.Name,
+				"current_dialer":     a.minLatency.dialer.property.Name,
+				"candidate_latency":  sortingLatency,
+				"current_latency":    a.minLatency.sortingLatency,
+				"switch_cooldown":    a.switchCooldown,
+				"cooldown_remaining": remaining,
+			}).Debugln("Dialer switch suppressed by cooldown")
+		}
+		return false, 0
+	}
+
+	// If switchMinWins <= 1, no consecutive-wins gate required.
+	if a.switchMinWins <= 1 {
+		return true, 1
+	}
+
+	// Track consecutive wins for the same candidate.
+	if a.candidateDialer != candidate {
+		a.candidateDialer = candidate
+		a.candidateWins = 0
+	}
+	a.candidateWins++
+
+	if a.candidateWins < a.switchMinWins {
+		if a.log.IsLevelEnabled(logrus.DebugLevel) {
+			a.log.WithFields(logrus.Fields{
+				"group":             a.dialerGroupName,
+				"network":           a.CheckTyp.String(),
+				"candidate_dialer":  candidate.property.Name,
+				"current_dialer":    a.minLatency.dialer.property.Name,
+				"candidate_wins":    a.candidateWins,
+				"switch_min_wins":   a.switchMinWins,
+				"candidate_latency": sortingLatency,
+				"current_latency":   a.minLatency.sortingLatency,
+			}).Debugln("Dialer switch waiting for consecutive wins")
+		}
+		return false, a.candidateWins
+	}
+
+	return true, a.candidateWins
+}
+
 func (a *AliveDialerSet) SortingLatency(d *Dialer) time.Duration {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -150,6 +280,22 @@ func (a *AliveDialerSet) SortingLatency(d *Dialer) time.Duration {
 	}
 	// Fallback to direct calculation (should not happen in normal operation).
 	return a.dialerToLatency[d] + a.dialerToLatencyOffset[d]
+}
+
+func (a *AliveDialerSet) bestAliveDialerExceptLocked(excluded *Dialer) (*Dialer, time.Duration) {
+	var bestDialer *Dialer
+	bestSortingLatency := time.Hour
+	for i := range a.aliveEntries {
+		entry := &a.aliveEntries[i]
+		if entry.dialer == excluded {
+			continue
+		}
+		if entry.sortingLatency < bestSortingLatency {
+			bestSortingLatency = entry.sortingLatency
+			bestDialer = entry.dialer
+		}
+	}
+	return bestDialer, bestSortingLatency
 }
 
 // GetMinLatency acquires correct selectionPolicy.
@@ -163,18 +309,7 @@ func (a *AliveDialerSet) GetMinLatency(excluded *Dialer) (d *Dialer, latency tim
 
 	// Find the best non-excluded dialer.
 	// Using aliveEntries with direct field access avoids map lookups.
-	var nextBest *Dialer
-	var nextBestSortingLatency = time.Hour
-	for i := range a.aliveEntries {
-		entry := &a.aliveEntries[i]
-		if entry.dialer == excluded {
-			continue
-		}
-		if entry.sortingLatency < nextBestSortingLatency {
-			nextBestSortingLatency = entry.sortingLatency
-			nextBest = entry.dialer
-		}
-	}
+	nextBest, nextBestSortingLatency := a.bestAliveDialerExceptLocked(excluded)
 
 	if nextBest != nil {
 		return nextBest, nextBestSortingLatency
@@ -301,25 +436,51 @@ func (a *AliveDialerSet) NotifyLatencyChange(dialer *Dialer, alive bool) {
 			a.aliveEntries[index].sortingLatency = sortingLatency
 		}
 		if alive &&
-			sortingLatency <= a.minLatency.sortingLatency &&
-			(a.minLatency.sortingLatency < a.tolerance || sortingLatency <= a.minLatency.sortingLatency-a.tolerance) {
-			a.minLatency.sortingLatency = sortingLatency
-			a.minLatency.dialer = dialer
+			(a.minLatency.dialer == nil ||
+				a.candidateBeatsCurrentBestLocked(dialer, sortingLatency)) {
+			// Voluntary promotion: a non-current dialer is beating the current best.
+			// Gate on switch cooldown and consecutive-wins requirement.
+			if allowed, wins := a.canPromoteCandidateLocked(dialer, sortingLatency); allowed {
+				a.minLatency.sortingLatency = sortingLatency
+				a.minLatency.dialer = dialer
+				a.lastCandidateWins = wins
+				a.resetSwitchCandidateLocked()
+			}
+			// else: gate suppresses this switch; do not update minLatency.
+		} else if dialer == a.candidateDialer {
+			// The current candidate no longer qualifies as a winning challenger, so
+			// future wins must start a fresh consecutive-wins sequence.
+			a.resetSwitchCandidateLocked()
 		} else if a.minLatency.dialer == dialer {
 			a.minLatency.sortingLatency = sortingLatency
+			a.resetSwitchCandidateIfNotWinningLocked()
 			if !alive || sortingLatency > bakOldMinSortingLatency {
 				// Latency increases.
 				if !alive {
 					a.minLatency.dialer = nil
+					// Current best died; reset candidate so the next contender starts fresh.
+					a.resetSwitchCandidateLocked()
+					a.calcMinLatency()
+					// Now `a.minLatency.dialer` will be nil if there is no alive dialer.
+				} else if candidate, candidateSortingLatency := a.bestAliveDialerExceptLocked(dialer); a.candidateBeatsCurrentBestLocked(candidate, candidateSortingLatency) {
+					if allowed, wins := a.canPromoteCandidateLocked(candidate, candidateSortingLatency); allowed {
+						a.minLatency.sortingLatency = candidateSortingLatency
+						a.minLatency.dialer = candidate
+						a.lastCandidateWins = wins
+						a.resetSwitchCandidateLocked()
+					}
 				}
-				a.calcMinLatency()
-				// Now `a.minLatency.dialer` will be nil if there is no alive dialer.
 			}
 		}
 		currentAlive := a.minLatency.dialer != nil
 		// If best dialer changed.
 		if a.minLatency.dialer != bakOldBestDialer {
 			if currentAlive {
+				// Stamp the switch time so voluntary-switch cooldown begins from
+				// every selection change, including failover and recalc-triggered
+				// switches that go through calcMinLatency.
+				a.lastSwitchAt = time.Now()
+
 				newBestDialer := a.minLatency.dialer
 				newBestLatency := a.dialerToLatency[newBestDialer]
 				newBestOffset := a.dialerToLatencyOffset[newBestDialer]
@@ -342,8 +503,12 @@ func (a *AliveDialerSet) NotifyLatencyChange(dialer *Dialer, alive bool) {
 						"_old_dialer":             oldDialerName,
 						"group":                   a.dialerGroupName,
 						"network":                 a.CheckTyp.String(),
+						"candidate_wins":          a.lastCandidateWins,
+						"switch_min_wins":         a.switchMinWins,
+						"switch_cooldown":         a.switchCooldown,
 					}).Infof("Group %vselects dialer", re)
 				}
+				a.lastCandidateWins = 0
 
 				a.printLatencies()
 			} else {
@@ -408,6 +573,8 @@ func (a *AliveDialerSet) recomputeSelectionStateLocked() {
 	a.minLatency = minLatency{
 		sortingLatency: time.Hour,
 	}
+	a.lastSwitchAt = time.Time{}
+	a.resetSwitchCandidateLocked()
 
 	if !isMinLatencyPolicy(a.selectionPolicy) {
 		return

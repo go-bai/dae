@@ -200,6 +200,8 @@ global {
   log_level: info
   allow_insecure: false
   auto_config_kernel_parameter: true
+  switch_cooldown: 0s
+  switch_min_wins: 1
 }
 
 subscription {
@@ -229,8 +231,12 @@ group {
   proxy {
     #filter: name(keyword: HK, keyword: SG)
     policy: min_moving_avg
+    #switch_cooldown: 30s
+    #switch_min_wins: 1
   }
 }
+
+`switch_cooldown` 和 `switch_min_wins` 是面向 `min`、`min_avg10` 和 `min_moving_avg` 组策略的可选防抖控制；在 group 中设置非零值时可覆盖全局值，当前节点死亡或缺失时会绕过。
 
 # 更多的 Routing 样例见 https://github.com/daeuniverse/dae/blob/main/docs/en/configuration/routing.md
 routing {

@@ -529,3 +529,34 @@ func TestDialerGroup_Select_DataUdpFixedPolicyDoesNotFallback(t *testing.T) {
 		t.Fatalf("expected fixed policy to keep selecting dialers[1], got another dialer")
 	}
 }
+
+func TestDialerGroup_UsesSwitchStabilityOptions(t *testing.T) {
+	option := &dialer.GlobalOption{
+		Log:               log,
+		TcpCheckOptionRaw: dialer.TcpCheckOptionRaw{Raw: []string{testTcpCheckUrl}},
+		CheckDnsOptionRaw: dialer.CheckDnsOptionRaw{Raw: []string{testUdpCheckDns}},
+		CheckInterval:     15 * time.Second,
+		CheckTolerance:    0,
+		SwitchCooldown:    30 * time.Second,
+		SwitchMinWins:     2,
+	}
+	dialers := []*dialer.Dialer{
+		newDirectDialer(option, false),
+		newDirectDialer(option, false),
+	}
+	g := NewDialerGroup(option, "test-group", dialers, newEmptyAnnotations(len(dialers)),
+		DialerSelectionPolicy{
+			Policy: consts.DialerSelectionPolicy_MinMovingAverageLatencies,
+		}, func(alive bool, networkType *dialer.NetworkType, isInit bool) {})
+
+	set := g.MustGetAliveDialerSet(TestNetworkType)
+	if set == nil {
+		t.Fatal("expected non-nil AliveDialerSet for MinMovingAvg policy")
+	}
+	if got := set.SwitchCooldown(); got != 30*time.Second {
+		t.Fatalf("SwitchCooldown() = %v, want 30s", got)
+	}
+	if got := set.SwitchMinWins(); got != 2 {
+		t.Fatalf("SwitchMinWins() = %d, want 2", got)
+	}
+}

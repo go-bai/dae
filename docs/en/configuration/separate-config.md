@@ -47,6 +47,8 @@ global {
     udp_check_dns: 'dns.google:53'
     check_interval: 600s
     check_tolerance: 50ms
+    switch_cooldown: 0s
+    switch_min_wins: 1
 
     #lan_interface: eth0
     wan_interface: eth0
@@ -97,6 +99,8 @@ group {
     my_group {
         filter: subtag(my_sub) && !name(keyword: 'ExpireAt:')
         policy: min_moving_avg
+        #switch_cooldown: 30s
+        #switch_min_wins: 1
     }
 
     local_group {
@@ -105,6 +109,8 @@ group {
     }
 }
 ```
+
+`switch_cooldown` and `switch_min_wins` are optional anti-flap controls for `min`, `min_avg10`, and `min_moving_avg` group policies; group values can override global values when set/non-zero, and dead or missing current nodes bypass the controls.
 
 ```jsonc
 # route.dae

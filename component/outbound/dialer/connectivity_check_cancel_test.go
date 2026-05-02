@@ -25,6 +25,8 @@ func registerTestAliveSet(t *testing.T, d *Dialer, networkType *NetworkType) *Al
 		"test-group",
 		networkType,
 		0,
+		0,
+		1,
 		consts.DialerSelectionPolicy_Random,
 		[]*Dialer{d},
 		[]*Annotation{{}},

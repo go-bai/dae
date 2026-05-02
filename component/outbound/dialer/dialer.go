@@ -179,6 +179,8 @@ type GlobalOption struct {
 	CheckDnsOptionRaw CheckDnsOptionRaw // Lazy parse
 	CheckInterval     time.Duration
 	CheckTolerance    time.Duration
+	SwitchCooldown    time.Duration
+	SwitchMinWins     int
 	CheckDnsTcp       bool
 	SoMarkFromDae     uint32
 	Mptcp             bool
@@ -228,6 +230,8 @@ func NewGlobalOption(global *config.Global, log *logrus.Logger) *GlobalOption {
 		CheckDnsOptionRaw:       CheckDnsOptionRaw{Raw: global.UdpCheckDns, ResolverNetwork: common.MagicNetwork("udp", soMarkFromDae, global.Mptcp), Somark: soMarkFromDae},
 		CheckInterval:           global.CheckInterval,
 		CheckTolerance:          global.CheckTolerance,
+		SwitchCooldown:          max(global.SwitchCooldown, 0),
+		SwitchMinWins:           max(global.SwitchMinWins, 1),
 		CheckDnsTcp:             true,
 		SoMarkFromDae:           soMarkFromDae,
 		Mptcp:                   global.Mptcp,

@@ -315,6 +315,7 @@ func IsAuthError(err error) bool {
 // heap allocations on the hot path. This is used by ContainsIgnorableErrorPattern.
 var ignorableErrorPatterns = []string{
 	"write: broken pipe",
+	"broken pipe",
 	"i/o timeout",
 	"connection reset by peer",
 	"canceled by local with error code 0",

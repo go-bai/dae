@@ -860,6 +860,14 @@ func ParseGroupOverrideOption(group config.Group, global config.Global, log *log
 		result.CheckTolerance = group.CheckTolerance
 		changed = true
 	}
+	if group.SwitchCooldown != 0 {
+		result.SwitchCooldown = max(group.SwitchCooldown, 0)
+		changed = true
+	}
+	if group.SwitchMinWins != 0 {
+		result.SwitchMinWins = max(group.SwitchMinWins, 1)
+		changed = true
+	}
 	if changed {
 		option := dialer.NewGlobalOption(&result, log)
 		return option, nil
@@ -3251,7 +3259,9 @@ func (c *ControlPlane) Serve(readyChan chan<- bool, listener *Listener) (err err
 				}
 
 				if e := c.handlePkt(udpConn, data, convergeSrc, realDst, routingResult, flowDecision, false); e != nil {
-					c.log.Warnln("handlePkt:", e)
+					if e.Error() != "touch max retry limit" {
+						c.log.Warnln("handlePkt:", e)
+					}
 					return
 				}
 

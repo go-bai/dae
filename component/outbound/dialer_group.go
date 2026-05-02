@@ -35,6 +35,8 @@ type DialerGroup struct {
 
 	dialersAnnotations  []*dialer.Annotation
 	checkTolerance      time.Duration
+	switchCooldown      time.Duration
+	switchMinWins       int
 	aliveChangeCallback func(alive bool, networkType *dialer.NetworkType, isInit bool)
 
 	resuscitateLastTime atomic.Int64
@@ -68,6 +70,8 @@ func NewDialerGroup(
 		Dialers:             dialers,
 		dialersAnnotations:  dialersAnnotations,
 		checkTolerance:      option.CheckTolerance,
+		switchCooldown:      max(option.SwitchCooldown, 0),
+		switchMinWins:       max(option.SwitchMinWins, 1),
 		aliveChangeCallback: aliveChangeCallback,
 	}
 	state := group.buildSelectionState(p, true)
@@ -449,7 +453,7 @@ func (g *DialerGroup) buildSelectionState(policy DialerSelectionPolicy, setAlive
 	for i, nt := range specs {
 		networkType := *nt
 		set := dialer.NewAliveDialerSet(
-			g.log, g.Name, &networkType, g.checkTolerance, policy.Policy,
+			g.log, g.Name, &networkType, g.checkTolerance, g.switchCooldown, g.switchMinWins, policy.Policy,
 			g.Dialers, g.dialersAnnotations,
 			func(networkType *dialer.NetworkType) func(alive bool) {
 				return func(alive bool) { g.aliveChangeCallback(alive, networkType, false) }
