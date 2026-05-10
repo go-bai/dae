@@ -134,6 +134,7 @@ type Group struct {
 	CheckTolerance     time.Duration `mapstructure:"check_tolerance"`
 	SwitchCooldown     time.Duration `mapstructure:"switch_cooldown"`
 	SwitchMinWins      int           `mapstructure:"switch_min_wins"`
+	HealthNetworks     []string      `mapstructure:"health_networks"`
 }
 
 type DnsRequestRouting struct {
