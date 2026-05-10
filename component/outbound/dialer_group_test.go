@@ -114,6 +114,49 @@ func markDialersDead(set *dialer.AliveDialerSet, dialers ...*dialer.Dialer) {
 	}
 }
 
+func TestDialerGroupHealthNetworksTcp4Admission(t *testing.T) {
+	option := &dialer.GlobalOption{
+		Log:               log,
+		TcpCheckOptionRaw: dialer.TcpCheckOptionRaw{Raw: []string{testTcpCheckUrl}},
+		CheckDnsOptionRaw: dialer.CheckDnsOptionRaw{Raw: []string{testUdpCheckDns}},
+		CheckInterval:     15 * time.Second,
+		CheckTolerance:    0,
+	}
+	dialers := []*dialer.Dialer{
+		newDirectDialer(option, false),
+		newDirectDialer(option, false),
+	}
+	g := NewDialerGroupWithHealthNetworks(option, "test-group", dialers, newEmptyAnnotations(len(dialers)),
+		DialerSelectionPolicy{Policy: consts.DialerSelectionPolicy_MinMovingAverageLatencies},
+		[]string{"tcp4"}, func(alive bool, networkType *dialer.NetworkType, isInit bool) {})
+
+	if got := g.MustGetAliveDialerSet(TestNetworkType); got == nil {
+		t.Fatal("tcp4 alive set is nil")
+	}
+	if got := g.MustGetAliveDialerSet(TestDnsUdp4NetworkType); got != nil {
+		t.Fatal("dns udp4 alive set should not be registered")
+	}
+	if got := g.MustGetAliveDialerSet(TestDataUdp4NetworkType); got != nil {
+		t.Fatal("data udp4 alive set should not be registered")
+	}
+
+	for _, d := range dialers {
+		d.MustGetLatencies10(TestNetworkType).AppendLatency(10 * time.Millisecond)
+		g.MustGetAliveDialerSet(TestNetworkType).NotifyLatencyChange(d, true)
+	}
+
+	d, _, selectedNetworkType, err := g.SelectWithExclusionResult(TestDataUdp4NetworkType, true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d == nil {
+		t.Fatal("expected selected dialer")
+	}
+	if selectedNetworkType.Index() != TestNetworkType.Index() {
+		t.Fatalf("selected network = %v, want tcp4", selectedNetworkType)
+	}
+}
+
 func TestDialerGroup_Select_Fixed(t *testing.T) {
 	option := &dialer.GlobalOption{
 		Log:               log,

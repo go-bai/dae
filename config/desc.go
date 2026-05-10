@@ -95,4 +95,5 @@ min_moving_avg: Select node by the moving average of latencies of checks, which 
 	"udp_check_dns":         "Override global config.",
 	"check_interval":        "Override global config.",
 	"check_tolerance":       "Override global config.",
+	"health_networks":       "Network health domains used for this group's dialer admission and latency selection. Defaults to all domains. Supported values: tcp4, tcp6, udp4, udp6, udp4_dns, udp6_dns.",
 }

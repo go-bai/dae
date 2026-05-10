@@ -600,7 +600,7 @@ func newControlPlaneWithContextOptions(
 			finalOption = groupOption
 		}
 		// Create dialer group and append it to outbounds.
-		dialerGroup := outbound.NewDialerGroup(finalOption, group.Name, dialers, annos, *policy,
+		dialerGroup := outbound.NewDialerGroupWithHealthNetworks(finalOption, group.Name, dialers, annos, *policy, group.HealthNetworks,
 			core.outboundAliveChangeCallback(uint8(len(outbounds)), disableKernelAliveCallback))
 		outbounds = append(outbounds, dialerGroup)
 	}

@@ -130,6 +130,7 @@ type Group struct {
 	UdpCheckDns        []string      `mapstructure:"udp_check_dns"`
 	CheckInterval      time.Duration `mapstructure:"check_interval"`
 	CheckTolerance     time.Duration `mapstructure:"check_tolerance"`
+	HealthNetworks     []string      `mapstructure:"health_networks"`
 }
 
 type DnsRequestRouting struct {

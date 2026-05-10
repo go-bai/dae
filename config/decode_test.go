@@ -31,6 +31,7 @@ group {
   proxy {
     policy: random
     filter: name(keyword: hk)
+    health_networks: "tcp4"
   }
 }
 
@@ -64,6 +65,7 @@ dns {
 	require.Len(t, conf.Node, 1)
 	require.Len(t, conf.Group, 1)
 	require.Equal(t, "proxy", conf.Group[0].Name)
+	require.Equal(t, []string{"tcp4"}, conf.Group[0].HealthNetworks)
 	require.Equal(t, 6, conf.Dns.IpVersionPrefer)
 	require.NotNil(t, conf.Routing.Fallback)
 	require.NotNil(t, conf.Dns.Routing.Request.Fallback)
